@@ -48,24 +48,24 @@ class TrackerWithCachedStates(DialogueStateTracker):
                  ):
         super(TrackerWithCachedStates, self).__init__(
                 sender_id, slots, topics, default_topic, max_event_history)
-        self._states = None
+        self._frozen_states = None
         self.domain = domain
 
-    def states(self):
+    def frozen_states(self):
         # type: () -> Tuple[frozenset, ...]
         """Return the states of the tracker based on the logged events."""
 
         # if don't have it cached, we use the domain to calculate the states
         # from the events
-        if self._states is None:
-            self._states = self._calculate_states()
+        if self._frozen_states is None:
+            self._frozen_states = self._calculate_frozen_states()
 
-        return tuple(self._states)
+        return tuple(self._frozen_states)
 
-    def clear_states(self):
+    def clear_frozen_states(self):
         # type: () -> None
         """Reset the states."""
-        self._states = None
+        self._frozen_states = None
 
     def init_copy(self):
         # type: () -> TrackerWithCachedStates
@@ -79,7 +79,7 @@ class TrackerWithCachedStates(DialogueStateTracker):
                           self._max_event_history,
                           self.domain)
 
-    def _calculate_states(self):
+    def _calculate_frozen_states(self):
         # type: () -> deque
 
         generated_states = self.domain.states_for_tracker_history(self)
@@ -100,15 +100,15 @@ class TrackerWithCachedStates(DialogueStateTracker):
         for event in self.events:
             tracker.update(event, skip_states=True)
 
-        tracker._states = copy.copy(self._states)
+        tracker._frozen_states = copy.copy(self._frozen_states)
 
         return tracker  # yields the final state
 
-    def _append_current_state(self):
+    def _append_current_frozen_state(self):
         # type: () -> None
 
         state = self.domain.get_active_states(self)
-        self._states.append(frozenset(state))
+        self._frozen_states.append(frozenset(state))
 
     def update(self, event, skip_states=False):
         # type: (Event, bool) -> None
@@ -117,10 +117,10 @@ class TrackerWithCachedStates(DialogueStateTracker):
         # if `skip_states` is `True`, this function behaves exactly like the
         # normal update of the `DialogueStateTracker`
 
-        if self._states is None and not skip_states:
+        if self._frozen_states is None and not skip_states:
             # rest of this function assumes we have the previous state
             # cached. let's make sure it is there.
-            self._states = self._calculate_states()
+            self._frozen_states = self._calculate_frozen_states()
 
         super(TrackerWithCachedStates, self).update(event)
 
@@ -128,15 +128,15 @@ class TrackerWithCachedStates(DialogueStateTracker):
             if isinstance(event, ActionExecuted):
                 pass
             elif isinstance(event, ActionReverted):
-                self._states.pop()
+                self._frozen_states.pop()
             elif isinstance(event, UserUtteranceReverted):
-                self.clear_states()
+                self.clear_frozen_states()
             elif isinstance(event, Restarted):
-                self.clear_states()
+                self.clear_frozen_states()
             else:
-                self._states.pop()
+                self._frozen_states.pop()
 
-            self._append_current_state()
+            self._append_current_frozen_state()
 
 
 # define types
@@ -500,20 +500,21 @@ class TrainingDataGenerator(object):
         end_trackers = []  # for all steps
 
         for tracker in trackers:
-            states = tracker.states()
-            hashed = hash(states)
+            frozen_states = tracker.frozen_states()
+            hashed = hash(frozen_states)
 
             # only continue with trackers that created a
             # hashed_featurization we haven't observed
             if hashed not in step_hashed_featurizations:
                 if self.config.unique_last_num_states:
-                    last_states = states[-self.config.unique_last_num_states:]
-                    last_hashed = hash(last_states)
+                    last_frozen_states = \
+                        frozen_states[-self.config.unique_last_num_states:]
+                    last_hashed = hash(last_frozen_states)
 
                     if last_hashed not in step_hashed_featurizations:
                         step_hashed_featurizations.add(last_hashed)
                         unique_trackers.append(tracker)
-                    elif (len(states) > len(last_states) and
+                    elif (len(frozen_states) > len(last_frozen_states) and
                           hashed not in self.hashed_featurizations):
                         self.hashed_featurizations.add(hashed)
                         end_trackers.append(tracker)
@@ -539,8 +540,8 @@ class TrainingDataGenerator(object):
         # otherwise featurization does a lot of unnecessary work
 
         for tracker in trackers:
-            states = tracker.states()
-            hashed = hash(states)
+            frozen_states = tracker.frozen_states()
+            hashed = hash(frozen_states)
 
             # only continue with trackers that created a
             # hashed_featurization we haven't observed
